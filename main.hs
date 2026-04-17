@@ -224,19 +224,21 @@ evilInherit :: [String] -> Bool
 evilInherit [] = False
 evilInherit (x:xs) = if (x == "Int" || x == "Bool" || x == "String") then True else evilInherit xs
 
+fakeInherit :: [String] -> [String] -> Bool
+fakeInherit [] _ = False
+fakeInherit (x:xs) l = if ((x `elem` l) || x == "NoInherit") then fakeInherit xs l else True
+
 main :: IO ()
 main = do
     content <- readFile "duplicateclass.cl-ast"
     
     let (Program classes) = parseASTFile content
     let classNames = map className classes
-    -- Error: l: Type-Check: u messed up
-    -- duplicate class decs
+    let inheritlist = map inheritances classes
     if hasdups [] classNames then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
-    if evilInherit (map inheritances classes) then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
-    -- inherit from Int/Bool/String
+    if evilInherit inheritlist then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
+    if fakeInherit inheritlist classNames then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
     -- circular whatever (literally toposort)
-    -- Check to see if a class inherits from Int (etc.).
 --Check to see if a class inherits from an undeclared class.
 --Check for duplicate method or attribute definitions in the same class.
 --Check for a child class that redefines a parent method but changes the parameters.
