@@ -57,12 +57,6 @@ data Token
 
 
 
-
-
-
-
-
-
 type ParseState a = State [String] a
 
 nextLine :: ParseState String
@@ -214,23 +208,38 @@ parseASTFile :: String -> Program
 parseASTFile content = evalState readProgram (lines content)
 
 
+className :: CoolClass -> String
+className (ClassNoInherit (_, name) _) = name
+className (ClassInherit (_, name) _ _) = name
 
-testClassCount :: FilePath -> IO ()
-testClassCount path = do
-    content <- readFile path
-    
-    let (Program classes) = parseASTFile content
-    
-    putStrLn $ "Successfully parsed " ++ path
-    putStrLn $ "Number of classes found: " ++ show (length classes)
-    
-    let classNames = map getName classes
-    putStrLn $ "Classes: " ++ show classNames
+inheritances :: CoolClass -> String
+inheritances (ClassNoInherit _ _) = "NoInherit"
+inheritances (ClassInherit _ (_, name) _) = name
 
-getName :: CoolClass -> String
-getName (ClassNoInherit (_, name) _) = name
-getName (ClassInherit (_, name) _ _) = name
+hasdups :: (Eq a) => [a] -> [a] -> Bool
+hasdups newlist [] = False
+hasdups l (x:xs) = if (x `elem` l) then True else hasdups (x:l) xs
+
+evilInherit :: [String] -> Bool
+evilInherit [] = False
+evilInherit (x:xs) = if (x == "Int" || x == "Bool" || x == "String") then True else evilInherit xs
 
 main :: IO ()
 main = do
-    testClassCount "cool.cl-ast"
+    content <- readFile "duplicateclass.cl-ast"
+    
+    let (Program classes) = parseASTFile content
+    let classNames = map className classes
+    -- Error: l: Type-Check: u messed up
+    -- duplicate class decs
+    if hasdups [] classNames then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
+    if evilInherit (map inheritances classes) then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
+    -- inherit from Int/Bool/String
+    -- circular whatever (literally toposort)
+    -- Check to see if a class inherits from Int (etc.).
+--Check to see if a class inherits from an undeclared class.
+--Check for duplicate method or attribute definitions in the same class.
+--Check for a child class that redefines a parent method but changes the parameters.
+--Check for a missing method main in class Main.
+--Check for self and SELF_TYPE mistakes in classes and methods.
+-- classes methods and attributes

@@ -1,0 +1,6 @@
+class A inherits B { };
+class B inherits C { };
+class C inherits A { };
+class Main {
+    main(): Int { 1 };
+};
