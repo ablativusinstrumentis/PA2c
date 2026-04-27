@@ -399,13 +399,13 @@ fakeInherit (x:xs) l = if ((x `elem` l) || x == "NoInherit") then fakeInherit xs
 
 checkeverything :: [CoolClass] -> String
 checkeverything classes
-    | hasdups [] classNames = "Error: 0: Type-Check: u messed up"
-    | evilInherit inheritlist = "Error: 0: Type-Check: u messed up"
-    | fakeInherit inheritlist classNames = "Error: 0: Type-Check: u messed up"
+    | hasdups [] classNames = "ERROR: 0: Type-Check: u messed up"
+    | evilInherit inheritlist = "ERROR: 0: Type-Check: u messed up"
+    | fakeInherit inheritlist classNames = "ERROR: 0: Type-Check: u messed up"
     -- | TOPOSORT putStr $ unlines (final (tsort (start deps) [] deps) tasks)     let tasks = rmdups classNames  let deps = classinherits
-    | dupfeatures classes = "Error: 0: Type-Check: u messed up" --ADD A SEPARATOR FOR ATTR AND METHOD BCS THEY CNA SHARE A NAME
-    | not ("Main" `elem` classNames) = "Error: 0: Type-Check: u messed up" --rev also THIS LINE MIGHT BE FUCKED UP BCS Nothing OR BCS guards bad
-    | not ("main" `elem` getFeatures (findClass "Main" classes)) = "Error: 0: Type-Check: u messed up"
+    | dupfeatures classes = "ERROR: 0: Type-Check: u messed up" --ADD A SEPARATOR FOR ATTR AND METHOD BCS THEY CNA SHARE A NAME
+    | not ("Main" `elem` classNames) = "ERROR: 0: Type-Check: u messed up" --rev also THIS LINE MIGHT BE FUCKED UP BCS Nothing OR BCS guards bad
+    | not ("main" `elem` getFeatures (findClass "Main" classes)) = "ERROR: 0: Type-Check: u messed up"
     -- | evilRedefine classinherits = "Error: 0: u messed up"
     | otherwise = "its chill"
     where classNames = map className classes
