@@ -1,6 +1,7 @@
 import Control.Monad.State
 import Control.Monad (replicateM)
 import Data.Char (toLower)
+import System.Environment (getArgs)
 
 data Program = Program [CoolClass]
 data CoolClass = ClassNoInherit (Int, String) [Feature] | ClassInherit (Int, String) (Int, String) [Feature]
@@ -208,6 +209,154 @@ parseASTFile :: String -> Program
 parseASTFile content = evalState readProgram (lines content)
 
 
+-- =============================================================================
+-- TYPE CHECKER HELPERS (Inheritance, LUB, SELF_TYPE)
+-- =============================================================================
+
+-- | InheritanceTable: [(ChildName, ParentName)]
+type InheritanceTable = [(String, String)]
+
+-- | TypeEnv: [(VariableName, TypeName)]
+type TypeEnv = [(String, String)]
+
+-- | SUBTYPING LOGIC
+-- Returns True if t1 conforms to t2 (t1 <= t2)
+isSubtype :: InheritanceTable -> String -> String -> Bool
+isSubtype table t1 t2
+    | t1 == t2 = True
+    | t1 == "Object" = False 
+    | otherwise = case lookup t1 table of
+        Just parent -> isSubtype table parent t2
+        Nothing     -> False
+
+-- | LUB LOGIC: Find the Lowest Common Ancestor
+-- Gets the full inheritance path from a class up to "Object"
+getAncestry :: InheritanceTable -> String -> [String] --("Int", "Object"), ("String", "Object"), and ("Bool", "Object")
+getAncestry table className 
+    | className == "Object" = ["Object"]
+    | otherwise = case lookup className table of
+        Just parent -> className : getAncestry table parent
+        Nothing     -> [className] 
+
+-- | Calculates the Least Upper Bound between two types
+getLUB :: InheritanceTable -> String -> String -> String
+getLUB table t1 t2
+    | t1 == t2 = t1
+    | otherwise = findCommon (getAncestry table t1) (getAncestry table t2)
+  where
+    findCommon (x:xs) path2
+        | x `elem` path2 = x
+        | otherwise      = findCommon xs path2
+    findCommon [] _ = "Object"
+
+-- | SELF_TYPE LOGIC
+-- Substitutes "SELF_TYPE" with the actual class being checked
+subSelf :: String -> String -> String
+subSelf currentClass "SELF_TYPE" = currentClass
+subSelf _ t = t
+
+-- | FORMATTING ERROR MESSAGES
+-- Helper to format error as: Error: LINE_NUMBER: Type-Check: MESSAGE
+typeError :: Int -> String -> Either String a
+typeError ln msg = Left $ "Error: " ++ show ln ++ ": Type-Check: " ++ msg
+
+-- =============================================================================
+-- INTEGRATED TYPE CHECKING
+-- =============================================================================
+
+-- Context carries the Inheritance table and the name of the class currently being checked
+type CheckContext = (InheritanceTable, String)
+
+checkExp :: CheckContext -> TypeEnv -> Exp -> Either String String
+checkExp (inh, currentClass) env expr = case expr of
+    
+    -- Variables: lookup in env
+    Var _ name -> case lookup name env of
+        Just t  -> Right (subSelf currentClass t)
+        Nothing -> Left "Error: 0: Type-Check: Undefined variable"
+
+    -- Assignment: Check if RHS conforms to LHS
+    Assign ln name e2 -> do
+        varT <- case lookup name env of
+            Just t  -> Right (subSelf currentClass t)
+            Nothing -> typeError ln "Variable not declared"
+        
+        valT <- checkExp (inh, currentClass) env e2
+        
+        if isSubtype inh valT varT
+            then Right valT
+            else typeError ln "Incompatible types in assignment"
+
+    -- Let: Extend env, substitute SELF_TYPE for the declared type
+    Let ln name typeName mInit body -> do
+        let declaredT = subSelf currentClass typeName
+        
+        -- Check init expression
+        case mInit of
+            Just initExp -> do
+                initT <- checkExp (inh, currentClass) env initExp
+                if isSubtype inh initT declaredT
+                    then Right ()
+                    else typeError ln "Init type mismatch"
+            Nothing -> Right ()
+        
+        -- Add to env and check body
+        let newEnv = (name, declaredT) : env
+        checkExp (inh, currentClass) newEnv body
+
+    -- Cond (If): LUB calculation example
+    Cond ln e1 e2 e3 -> do
+        type1 <- checkExp (inh, currentClass) env e1
+        if type1 /= "Bool" then typeError ln "If condition must be Bool"
+        else do
+            t2 <- checkExp (inh, currentClass) env e2
+            t3 <- checkExp (inh, currentClass) env e3
+            Right (getLUB inh t2 t3)
+
+    -- Base cases (Literals)
+    IntLiteral _ _    -> Right "Int"
+    Boolean _ _       -> Right "Bool"
+    StrLiteral _ _    -> Right "String"
+    
+    _ -> Left "Not implemented"
+
+
+-- START TOPOSORT
+start :: [(String,[String])] -> [String]
+start d = [x | (x,[]) <- d]
+
+tsort :: [String] -> [String] -> [(String,[String])] -> [String]
+tsort starting sorted dep
+	| null starting = sorted
+	| otherwise = tsort ([x | (x,[]) <- ndep]) (sorted ++ [node]) (ndep)
+  where ndep = [(a,b) | (a,b)<-[(a, [c | c<-b, c /= node]) | (a,b)<-dep], a /= node]
+        node = head (qsort starting)
+
+final :: [String] -> [String] -> [String]
+final sorted tasks
+	| length sorted < length tasks = ["cycle"]
+	| otherwise = sorted
+  
+qsort :: (Ord a) => [a] -> [a]  
+qsort [] = []  
+qsort (x:xs) = 
+    let smallerSorted = qsort [a | a <- xs, a <= x]  
+        biggerSorted = qsort [a | a <- xs, a > x]  
+    in  smallerSorted ++ [x] ++ biggerSorted
+    
+rmdups :: (Eq a) => [a] -> [a]
+rmdups [] = []
+rmdups (x:xs)   
+	| x `elem` xs   = rmdups xs
+	| otherwise     = x : rmdups xs
+
+listify :: [(String, String)] -> [(String, [String])]
+listify [] = []
+listify ((cname, "NoInherit"):xs) = (cname, []) : listify xs
+listify ((cname,iname):xs) = (cname,[iname]) : listify xs
+-- END TOPOSORT
+
+
 className :: CoolClass -> String
 className (ClassNoInherit (_, name) _) = name
 className (ClassInherit (_, name) _ _) = name
@@ -215,6 +364,26 @@ className (ClassInherit (_, name) _ _) = name
 inheritances :: CoolClass -> String
 inheritances (ClassNoInherit _ _) = "NoInherit"
 inheritances (ClassInherit _ (_, name) _) = name
+
+getFeatures :: Maybe CoolClass -> [String]
+getFeatures (Just (ClassNoInherit _ fs)) = featureNames fs
+getFeatures (Just (ClassInherit _ _ fs)) = featureNames fs
+getFeatures Nothing = ["hi dont do that"]
+
+featureNames :: [Feature] -> [String]
+featureNames [] = []
+featureNames ((Method (_, name) _ _ _):fs) = name:featureNames fs
+featureNames ((Attr (_, name) _ _):fs) = name:featureNames fs
+
+dupfeatures :: [CoolClass] -> Bool
+dupfeatures [] = False
+dupfeatures (c:cs) = hasdups [] (getFeatures (Just c))
+
+findClass :: String -> [CoolClass] -> Maybe CoolClass
+findClass s [] = Nothing
+findClass s (c:cs)
+    | s == className c = Just c
+    | otherwise = findClass s cs
 
 hasdups :: (Eq a) => [a] -> [a] -> Bool
 hasdups newlist [] = False
@@ -228,20 +397,30 @@ fakeInherit :: [String] -> [String] -> Bool
 fakeInherit [] _ = False
 fakeInherit (x:xs) l = if ((x `elem` l) || x == "NoInherit") then fakeInherit xs l else True
 
+checkeverything :: [CoolClass] -> String
+checkeverything classes
+    | hasdups [] classNames = "Error: 0: Type-Check: u messed up"
+    | evilInherit inheritlist = "Error: 0: Type-Check: u messed up"
+    | fakeInherit inheritlist classNames = "Error: 0: Type-Check: u messed up"
+    -- | TOPOSORT putStr $ unlines (final (tsort (start deps) [] deps) tasks)     let tasks = rmdups classNames  let deps = classinherits
+    | dupfeatures classes = "Error: 0: Type-Check: u messed up" --ADD A SEPARATOR FOR ATTR AND METHOD BCS THEY CNA SHARE A NAME
+    | not ("Main" `elem` classNames) = "Error: 0: Type-Check: u messed up" --rev also THIS LINE MIGHT BE FUCKED UP BCS Nothing OR BCS guards bad
+    | not ("main" `elem` getFeatures (findClass "Main" classes)) = "Error: 0: Type-Check: u messed up"
+    -- | evilRedefine classinherits = "Error: 0: u messed up"
+    | otherwise = "its chill"
+    where classNames = map className classes
+          inheritlist = map inheritances classes
+          classinherits = listify (zip classNames inheritlist)
+
 main :: IO ()
 main = do
-    content <- readFile "duplicateclass.cl-ast"
-    
-    let (Program classes) = parseASTFile content
-    let classNames = map className classes
-    let inheritlist = map inheritances classes
-    if hasdups [] classNames then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
-    if evilInherit inheritlist then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
-    if fakeInherit inheritlist classNames then putStrLn $ "Error: 0: u messed up" else putStrLn $ "hi"
-    -- circular whatever (literally toposort)
---Check to see if a class inherits from an undeclared class.
---Check for duplicate method or attribute definitions in the same class.
---Check for a child class that redefines a parent method but changes the parameters.
---Check for a missing method main in class Main.
+    args <- getArgs
+    case args of
+        [path] -> do
+            content <- readFile path
+            let (Program classes) = parseASTFile content
+            putStrLn $ (checkeverything classes)
+        _ -> do
+            putStrLn $ "hey dont do that"
+    -- IF SOMETHING IS WRONG ADD INT BOOL ETC
 --Check for self and SELF_TYPE mistakes in classes and methods.
--- classes methods and attributes
