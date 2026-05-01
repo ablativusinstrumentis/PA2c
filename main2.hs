@@ -2,7 +2,6 @@ import Control.Monad.State
 import Control.Monad (replicateM)
 import Data.Char (toLower)
 import System.Environment (getArgs)
-import System.FilePath (replaceExtension)
 
 data Program = Program [CoolClass]
 data CoolClass = ClassNoInherit (Int, String) [Feature] | ClassInherit (Int, String) (Int, String) [Feature]
@@ -32,12 +31,10 @@ data Exp
     | Eq Int Exp Exp
     | Not Int Exp
     | Var Int String
-    | Int Int Int
-    | Str Int String
+    | IntLiteral Int Int
+    | StrLiteral Int String
     | Boolean Int Bool
     deriving Show
-
-predefinedClassList = [(ClassNoInherit (0, "Object") []),(ClassInherit (0, "Bool") (0, "Object") []),(ClassInherit (0, "IO") (0, "Object") []),(ClassInherit (0, "Int") (0, "Object") []),(ClassInherit (0, "String") (0, "Object") [])]
 
 data CaseBranch = CaseBranch (Int, String) (Int, String) Exp
     deriving Show
@@ -59,50 +56,9 @@ data Token
     | TOKENTRUE Int | TOKENTYPE (Int, String) | TOKENWHILE Int
     deriving Show
 
-class HasL a where
-    getL :: a -> Int
-instance HasL Program where
-    getL (Program _) = 0
-instance HasL CoolClass where
-    getL (ClassNoInherit (l, _) _)   = l
-    getL (ClassInherit (l, _) _ _)   = l
-instance HasL Feature where
-    getL (Method (l, _) _ _ _) = l
-    getL (Attr (l, _) _ _)     = l
-instance HasL Formal where
-    getL (Formal (l, _) _) = l
-instance HasL Exp where
-    getL e = case e of
-        Assign l _ _              -> l
-        StaticDispatch l _ _ _ _  -> l
-        DynamicDispatch l _ _ _ _ -> l
-        SelfDispatch l _ _        -> l
-        Cond l _ _ _              -> l
-        Loop l _ _                -> l
-        Block l _                 -> l
-        Let l _ _ _ _             -> l
-        Case l _ _                -> l
-        New l _                   -> l
-        IsVoid l _                -> l
-        Plus l _ _                -> l
-        Minus l _ _               -> l
-        Times l _ _               -> l
-        Divide l _ _              -> l
-        Neg l _                   -> l
-        CoolLT l _ _              -> l
-        LE l _ _                  -> l
-        Eq l _ _                  -> l
-        Not l _                   -> l
-        Var l _                   -> l
-        Int l _            -> l
-        Str l _            -> l
-        Boolean l _               -> l
+
 
 type ParseState a = State [String] a
-
-hasdups :: (Eq a) => [a] -> [a] -> Bool
-hasdups newlist [] = False
-hasdups l (x:xs) = if (x `elem` l) then True else hasdups (x:l) xs
 
 nextLine :: ParseState String
 nextLine = do
@@ -121,6 +77,7 @@ readCoolList parser = do
 
 readProgram :: ParseState Program
 readProgram = Program <$> readCoolList readClass
+
 readClass :: ParseState CoolClass
 readClass = do
     ln <- nextInt
@@ -167,6 +124,7 @@ readFormal = do
     tLn <- nextInt
     tName <- nextLine
     return $ Formal (ln, name) (tLn, tName)
+
 readExp :: ParseState Exp
 readExp = do
     ln <- nextInt
@@ -213,8 +171,8 @@ readExp = do
         "identifier" -> do
             _ <- nextInt
             Var ln <$> nextLine
-        "integer" -> Int ln <$> nextInt
-        "string"  -> Str ln <$> nextLine
+        "integer" -> IntLiteral ln <$> nextInt
+        "string"  -> StrLiteral ln <$> nextLine
         "true"    -> return $ Boolean ln True
         "false"   -> return $ Boolean ln False
         _ -> error $ "Unknown expression kind: " ++ kind
@@ -356,13 +314,14 @@ checkExp (inh, currentClass) env expr = case expr of
             Right (getLUB inh t2 t3)
 
     -- Base cases (Literals)
-    Int _ _    -> Right "Int"
+    IntLiteral _ _    -> Right "Int"
     Boolean _ _       -> Right "Bool"
-    Str _ _    -> Right "String"
+    StrLiteral _ _    -> Right "String"
     
     _ -> Left "Not implemented"
--------------------------------------------------
--- START TOPOSORT--------------------------------
+
+
+-- START TOPOSORT
 start :: [(String,[String])] -> [String]
 start d = [x | (x,[]) <- d]
 
@@ -395,19 +354,47 @@ listify :: [(String, String)] -> [(String, [String])]
 listify [] = []
 listify ((cname, "NoInherit"):xs) = (cname, []) : listify xs
 listify ((cname,iname):xs) = (cname,[iname]) : listify xs
--- END TOPOSORT--------------------------
------------------------------------------
+-- END TOPOSORT
 
+getL (Program _) = 0
+getL (ClassNoInherit (l, _) _) = l
+getL (ClassInherit (l, _) _ _) = l
+
+
+className :: CoolClass -> String
+className (ClassNoInherit (_, name) _) = name
+className (ClassInherit (_, name) _ _) = name
 
 inheritances :: CoolClass -> String
 inheritances (ClassNoInherit _ _) = "NoInherit"
 inheritances (ClassInherit _ (_, name) _) = name
+
+methodNames :: [Feature] -> [String]
+methodNames [] = []
+methodNames ((Method (_, name) _ _ _):fs) = name:methodNames fs
+methodNames ((Attr (_, name) _ _):fs) = methodNames fs
+
+attrNames :: [Feature] -> [String]
+attrNames [] = []
+attrNames ((Method (_, name) _ _ _):fs) = attrNames fs
+attrNames ((Attr (_, name) _ _):fs) = name:attrNames fs
+
+-- CHANGE THIS FOR DUPMETHODS AND DUPATTRS
+dupfeatures :: [CoolClass] -> (Bool, Int)
+dupfeatures [] = (False, -1)
+dupfeatures (c:cs) -- let hasdups etc = (a,b) in then guard for a, if a then propogate (a,b)
+    | (hasdups [] (getFeatures (Just c))) = (True, getL c)
+    | otherwise = dupfeatures cs
 
 findClass :: String -> [CoolClass] -> Maybe CoolClass
 findClass s [] = Nothing
 findClass s (c:cs)
     | s == className c = Just c
     | otherwise = findClass s cs
+
+hasdups :: (Eq a) => [a] -> [a] -> Bool
+hasdups newlist [] = False
+hasdups l (x:xs) = if (x `elem` l) then True else hasdups (x:l) xs
 
 evilInherit :: [String] -> Bool
 evilInherit [] = False
@@ -419,16 +406,16 @@ fakeInherit (x:xs) l = if ((x `elem` l) || x == "NoInherit") then fakeInherit xs
 
 checkeverything :: [CoolClass] -> String
 checkeverything classes
-    | hasdups [] classNames = "ERROR: 0: Type-Check: u messed up1" --Redefining a formal or class: (second) identifier location
-    | evilInherit inheritlist = "ERROR: 0: Type-Check: u messed up2" --Other inheritance type problem: inherited type identifier location
-    -- | fakeInherit inheritlist classNames = "ERROR: 0: Type-Check: u messed up3" --Other inheritance type problem: inherited type identifier location
-    -- | (final (tsort (start deps) [] deps) tasks) == ["cycle"] = "ERROR: 0: Type-Check: inheritance cycle"
+    | hasdups [] classNames = "ERROR: 0: Type-Check: u messed up" --Redefining a formal or class: (second) identifier location
+    | evilInherit inheritlist = "ERROR: 0: Type-Check: u messed up" --Other inheritance type problem: inherited type identifier location
+    | fakeInherit inheritlist classNames = "ERROR: 0: Type-Check: u messed up" --Other inheritance type problem: inherited type identifier location
+    | (final (tsort (start deps) [] deps) tasks) == ["cycle"] = "ERROR: 0: Type-Check: inheritance cycle"
     --Redefining a feature: (second) feature location
     -- also like write the thing where it gives you (Bool, Int) and you guard based on the Bool and then write in the Int 
     -- let (a,b) = THING in | a = "ERROR: " ++ show b ++ ": Type-Check: u messed up"
-    -- | dupfeatures classes = "ERROR: 0: Type-Check: u messed up" --ADD A SEPARATOR FOR ATTR AND METHOD BCS THEY CNA SHARE A NAME
-    | not ("Main" `elem` classNames) = "ERROR: 0: Type-Check: u messed up4" --rev also THIS LINE MIGHT BE FUCKED UP BCS Nothing OR BCS guards bad
-    -- | not ("main" `elem` getFeatures (findClass "Main" classes)) = "ERROR: 0: Type-Check: u messed up"
+    | dupfeatures classes = "ERROR: 0: Type-Check: u messed up" --ADD A SEPARATOR FOR ATTR AND METHOD BCS THEY CNA SHARE A NAME
+    | not ("Main" `elem` classNames) = "ERROR: 0: Type-Check: u messed up" --rev also THIS LINE MIGHT BE FUCKED UP BCS Nothing OR BCS guards bad
+    | not ("main" `elem` getFeatures (findClass "Main" classes)) = "ERROR: 0: Type-Check: u messed up"
     -- | evilRedefine classinherits = "Error: 0: u messed up"
     | otherwise = "its chill"
     where classNames = map className classes
@@ -448,50 +435,6 @@ checkeverything classes
 --Method body type does not conform: method name identifier location
 -- Attribute initializer does not conform: attribute name identifier location
 
-className :: CoolClass -> String
-className (ClassNoInherit (_, name) _) = name
-className (ClassInherit (_, name) _ _) = name
-
-classSort :: [CoolClass] -> [CoolClass]
-classSort [] = []
-classSort (x:xs) = let smallerSorted = classSort [c | c <-xs, className c <= className x]
-                       biggerSorted = classSort [c | c<-xs, className c > className x]
-                   in smallerSorted ++ [x] ++ biggerSorted
-
-attrs :: [Feature] -> [Feature]
-attrs [] = []
-attrs ((Attr n t e):fs) = (Attr n t e) : attrs fs
-attrs ((Method n f t e):fs) = attrs fs
-
-classMapProgram :: Program -> String
-classMapProgram (Program classes) = "class_map\n" ++ show (5 + length classes) ++ "\n" ++ (concatMap classMapClass (classSort (classes ++ predefinedClassList)))
--- add inherited feature stuff LATER HAHA
-classMapClass :: CoolClass -> String
-classMapClass (ClassNoInherit (_, name) features) = name ++ "\n" ++ show (length (attrs features)) ++ "\n" ++ (concatMap classMapAttributes features)
-classMapClass (ClassInherit (_, name) _ features) = name ++ "\n" ++ show (length (attrs features)) ++ "\n" ++ (concatMap classMapAttributes features)
-
-classMapAttributes :: Feature -> String
-classMapAttributes (Attr (_, name) (_, typename) (Just expression)) = "initializer\n" ++ name ++ "\n" ++ typename ++ "\n" ++ serializeExp expression ++ "\n"
-classMapAttributes (Attr (_, name) (_, typename) Nothing) = "no_initializer\n" ++ name ++ "\n" ++ typename ++ "\n"
-classMapAttributes _ = ""
-
-serializeExp :: Exp -> String
-serializeExp (Int l val) = 
-    show l ++ "\n" ++ 
-    "integer\n" ++ 
-    show val
-serializeExp (Boolean l True) = 
-    show l ++ "\n" ++ 
-    "true"
-serializeExp (Boolean l False) = 
-    show l ++ "\n" ++ 
-    "false"
-serializeExp (Str l val) = 
-    show l ++ "\n" ++ 
-    "string\n" ++ 
-    val
-serializeExp other = show other ++ "\n"
-
 main :: IO ()
 main = do
     args <- getArgs
@@ -499,11 +442,7 @@ main = do
         [path] -> do
             content <- readFile path
             let (Program classes) = parseASTFile content
-            case checkeverything classes of
-                "its chill" -> do 
-                    writeFile (replaceExtension path ".cl-type") (classMapProgram (Program classes))
-                _ -> do 
-                    putStrLn $ checkeverything classes
+            putStrLn $ (checkeverything classes)
         _ -> do
             putStrLn $ "hey dont do that"
     -- IF SOMETHING IS WRONG ADD INT BOOL ETC
