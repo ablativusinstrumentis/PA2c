@@ -499,11 +499,11 @@ main = do
         [path] -> do
             content <- readFile path
             let (Program classes) = parseASTFile content
-            case checkeverything classes of
-                "its chill" -> do 
-                    writeFile (replaceExtension path ".cl-type") (classMapProgram (Program classes))
-                _ -> do 
-                    putStrLn $ checkeverything classes
+            --case checkeverything classes of
+                --"its chill" -> do 
+            writeFile (replaceExtension path ".cl-type") (classMapProgram (Program classes))
+               -- _ -> do 
+                --    putStrLn $ checkeverything classes
         _ -> do
             putStrLn $ "hey dont do that"
     -- IF SOMETHING IS WRONG ADD INT BOOL ETC
